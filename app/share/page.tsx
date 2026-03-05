@@ -14,7 +14,8 @@ import {
   Gift,
   Download,
   Users,
-  CheckCircle2
+  CheckCircle2,
+  Trash2 // NUEVO: Ícono para borrar
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
@@ -105,7 +106,7 @@ export default function App() {
         const batch = p.batch_number || 1
         newStock[`${batch}_${p.name}`] = p.stock
       })
-      setPrizes(data)
+      setPrizes(data) // Guardamos la verdad de la BD
     }
     setLocalStock(newStock)
   }
@@ -144,6 +145,30 @@ export default function App() {
       setNewStoreName('')
       initAdmin() // Refrescar lista de tiendas
       setSelectedStore(store)
+    }
+  }
+
+  // NUEVO: Función para inactivar (Soft Delete) la sucursal
+  const handleDeleteStore = async (e: React.MouseEvent, storeId: string, storeName: string) => {
+    e.stopPropagation() // Evita que se dispare el onClick del contenedor (seleccionar la tienda)
+    
+    const confirmDelete = window.confirm(`¿Estás seguro de que deseas eliminar/inactivar la sucursal "${storeName}"?`)
+    if (!confirmDelete) return
+
+    const { error } = await supabase
+      .from('stores')
+      .update({ is_active: false })
+      .eq('id', storeId)
+
+    if (error) {
+      console.error("Error al inactivar tienda:", error)
+      alert(`Ocurrió un error al eliminar: ${error.message}`)
+    } else {
+      // Si la tienda eliminada era la que estábamos viendo, limpiamos la vista principal
+      if (selectedStore?.id === storeId) {
+        setSelectedStore(null)
+      }
+      initAdmin() // Refrescamos la lista
     }
   }
 
@@ -192,7 +217,7 @@ export default function App() {
       alert("¡Stock de Lotes guardado exitosamente!")
     }
 
-    await fetchStoreData(selectedStore.id)
+    await fetchStoreData(selectedStore.id) // Refresca los datos y activa los bloqueos correspondientes
     setIsSaving(false)
   }
 
@@ -221,7 +246,7 @@ export default function App() {
   }
 
   if (loading) return (
-    <div className="h-screen w-full flex flex-col items-center justify-center bg-zinc-50 gap-4">
+    <div className="h-screen w-full flex flex-col items-center justify-center bg-black gap-4">
       <Loader2 className="animate-spin text-green-600" size={40} />
       <p className="text-zinc-400 font-black uppercase tracking-widest text-[10px]">Cargando Control Center...</p>
     </div>
@@ -289,18 +314,33 @@ export default function App() {
 
                 <div className="space-y-2 max-h-[450px] overflow-y-auto pr-1 custom-scrollbar">
                   {stores.map(s => (
-                    <button 
+                    <div 
                       key={s.id}
                       onClick={() => setSelectedStore(s)}
-                      className={`w-full flex items-center justify-between p-4 rounded-2xl transition-all font-bold text-xs ${
+                      className={`w-full flex items-center justify-between p-3 rounded-2xl transition-all font-bold text-xs group cursor-pointer border ${
                         selectedStore?.id === s.id 
-                        ? 'bg-green-600 text-white shadow-lg shadow-green-600/20 scale-[1.02]' 
-                        : 'bg-zinc-50 dark:bg-black text-zinc-500 hover:bg-white dark:hover:bg-zinc-800 border border-transparent'
+                        ? 'bg-green-600 text-white border-green-600 shadow-lg shadow-green-600/20 scale-[1.02]' 
+                        : 'bg-zinc-50 dark:bg-black text-zinc-500 hover:bg-white dark:hover:bg-zinc-800 border-transparent dark:border-zinc-800/50'
                       }`}
                     >
-                      <span className="truncate uppercase">{s.name}</span>
-                      <ChevronRight size={14} className={selectedStore?.id === s.id ? "opacity-100" : "opacity-30"} />
-                    </button>
+                      <span className="truncate uppercase pr-2 pl-2">{s.name}</span>
+                      
+                      <div className="flex items-center gap-1">
+                        {/* Botón de Inactivar Sucursal */}
+                        <button
+                          onClick={(e) => handleDeleteStore(e, s.id, s.name)}
+                          className={`p-1.5 rounded-lg transition-all ${
+                            selectedStore?.id === s.id
+                            ? 'hover:bg-green-700 text-green-200 hover:text-white'
+                            : 'text-zinc-400 hover:bg-red-100 dark:hover:bg-red-900/40 hover:text-red-500 opacity-0 group-hover:opacity-100'
+                          }`}
+                          title="Eliminar Sucursal"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        <ChevronRight size={14} className={selectedStore?.id === s.id ? "opacity-100" : "opacity-30"} />
+                      </div>
+                    </div>
                   ))}
                 </div>
              </div>
@@ -328,13 +368,13 @@ export default function App() {
                      </a>
                      
                      <button 
-                       onClick={saveStock}
-                       disabled={isSaving}
-                       className="bg-green-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-green-700 transition-all shadow-lg shadow-green-500/10"
-                     >
-                       {isSaving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
-                       Guardar Lotes
-                     </button>
+                        onClick={saveStock}
+                        disabled={isSaving}
+                        className="bg-green-600 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-green-700 transition-all shadow-lg shadow-green-500/10"
+                      >
+                        {isSaving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />}
+                        Guardar Lotes
+                      </button>
                    </div>
                 </div>
 
@@ -376,6 +416,10 @@ export default function App() {
                      ) : templates.map(t => {
                        const stockVal = localStock[`${activeBatch}_${t.name}`] ?? ''
                        
+                       // LÓGICA DE BLOQUEO INDIVIDUAL
+                       const existingDbPrize = prizes.find(p => p.name === t.name && (p.batch_number === activeBatch || (!p.batch_number && activeBatch === 1)))
+                       const hasSavedStock = existingDbPrize && existingDbPrize.stock > 0
+                       
                        return (
                        <div key={t.id} className="bg-zinc-50 dark:bg-black/40 p-6 rounded-[2.5rem] border border-zinc-100 dark:border-zinc-800 flex flex-col items-center group transition-all hover:border-green-300">
                           <div className="w-24 h-24 bg-white dark:bg-zinc-800 rounded-3xl overflow-hidden shadow-inner border border-zinc-100 dark:border-zinc-700 mb-6 group-hover:scale-105 transition-transform">
@@ -392,7 +436,12 @@ export default function App() {
                             <input 
                               type="number"
                               min="0"
-                              className="w-full bg-white dark:bg-zinc-900 px-4 py-3 rounded-2xl font-black text-2xl text-center outline-none border border-zinc-100 dark:border-zinc-800 focus:ring-4 focus:ring-green-500/10 transition-all shadow-sm"
+                              disabled={hasSavedStock} // Se bloquea SOLO si ya se guardó stock > 0
+                              className={`w-full px-4 py-3 rounded-2xl font-black text-2xl text-center outline-none border transition-all shadow-sm ${
+                                hasSavedStock 
+                                ? 'bg-zinc-100 dark:bg-zinc-800/50 border-transparent opacity-60 cursor-not-allowed text-zinc-500' 
+                                : 'bg-white dark:bg-zinc-900 border-zinc-100 dark:border-zinc-800 focus:ring-4 focus:ring-green-500/10 text-zinc-900 dark:text-zinc-100'
+                              }`}
                               value={stockVal}
                               onChange={e => handleUpdateStock(activeBatch, t.name, e.target.value)}
                             />
